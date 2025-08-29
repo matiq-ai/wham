@@ -1,10 +1,38 @@
-= WHAM! - A smart and stateful task runner for local workflows
+= WHAM! - A smart and stateful task runner for running workflows everywhere
 
 :toc: left
 :toclevels: 2
 :source-highlighter: rouge
 
 > Workflows Happen, Automate More!
+
+*From local development to production orchestrators - same workflow, same state, zero waste.*
+
+WHAM brings intelligent work avoidance and dev-prod parity to cloud-native orchestrators like Argo Workflows, solving the "expensive re-runs" and "local-prod mismatch" problems that cost AI/BI teams time and money.
+
+- *Test locally, deploy to a workflow orchestrator* - identical behavior
+- *Skip expensive re-runs* - intelligent state tracking  
+- *Zero orchestrator lock-in* - works with Argo, Tekton, Kubeflow, etc.
+- *Single binary* - no complex setup or dependencies
+
+== Why WHAM?
+
+*Scenario*: you have a complex AI/ELT/data integration pipeline with expensive computation steps. Your data updates daily, but your steps only need to be run when the upstream data changes.
+
+- *Without WHAM*: the orchestrator needs to re-run everything
+- *With WHAM*: intelligent skip. workflow steps re-run only when needed
+
+*Scenario*: your data pipeline works locally but breaks in production due to environment differences.
+
+- *Without WHAM*: debug-fix cycle in prod. Downtime. Stress...
+- *With WHAM*: same WHAM config, same behavior everywhere
+
+[NOTE]
+====
+Teams using WHAM with Argo Workflows typically see a substantial reduction in unnecessary CPU/GPU compute time and seamless local-to-dev and dev-to-prod workflow transitions.
+====
+
+== Overview
 
 WHAM! is a simple, dependency-free, single-binary tool for executing local or single-server workflows, with a simple state model to prevent re-running unnecessary jobs.
 
@@ -315,7 +343,7 @@ The `wham_settings` section in the settings file(s) defines the global parameter
 
 | `shared_args`
 | list
-| A list of command-line argument templates to be passed to *every* step script. Each template can expand into multiple space-separated arguments
+| A list of command-line argument templates to be passed to *every* step script. Each string in the list is treated as a Go template and is then split by spaces to produce multiple arguments. For example, `"--context={{.Step.Name}} --verbose"` would be passed as two separate arguments
 |====
 
 === Step definitions

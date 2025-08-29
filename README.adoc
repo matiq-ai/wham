@@ -4,28 +4,45 @@
 :toclevels: 2
 :source-highlighter: rouge
 
-> Workflows Happen, Automate More!
+> WHAM! (Workflows Happen, Automate More!)
 
 *From local development to production orchestrators - same workflow, same state, zero waste.*
 
 WHAM brings intelligent work avoidance and dev-prod parity to cloud-native orchestrators like Argo Workflows, solving the "expensive re-runs" and "local-prod mismatch" problems that cost AI/BI teams time and money.
 
-- *Test locally, deploy to a workflow orchestrator* - identical behavior
-- *Skip expensive re-runs* - intelligent state tracking  
-- *Zero orchestrator lock-in* - works with Argo, Tekton, Kubeflow, etc.
-- *Single binary* - no complex setup or dependencies
+* *Test locally, deploy to a workflow orchestrator* - identical behavior
+* *Skip expensive re-runs* - intelligent state tracking  
+* *Zero orchestrator lock-in* - works with Argo, Tekton, Kubeflow, etc.
+* *Single binary* - no complex setup or dependencies
 
 == Why WHAM?
 
 *Scenario*: you have a complex AI/ELT/data integration pipeline with expensive computation steps. Your data updates daily, but your steps only need to be run when the upstream data changes.
 
-- *Without WHAM*: the orchestrator needs to re-run everything
-- *With WHAM*: intelligent skip. workflow steps re-run only when needed
+* *Without WHAM*: the orchestrator needs to re-run everything
+* *With WHAM*: intelligent skip. workflow steps re-run only when needed
 
 *Scenario*: your data pipeline works locally but breaks in production due to environment differences.
 
-- *Without WHAM*: debug-fix cycle in prod. Downtime. Stress...
-- *With WHAM*: same WHAM config, same behavior everywhere
+* *Without WHAM*: debug-fix cycle in prod. Downtime. Stress...
+* *With WHAM*: same WHAM config, same behavior everywhere
+
+=== How WHAM avoids unnecessary work: a practical example
+
+Let's walk through a simple two-step workflow to see WHAM's work avoidance in action. The workflow consists of:
+
+* `check-source-data`: a *stateful* step that checks for new upstream data (an archive file in our case) and uses the archive file name or its modification timestamp as the state identifier for the step (`run_id`)
+* `process-data`: a *stateless* step that depends on `check-source-data` and does some expensive work
+
+. *RUN 1: the first execution*
++
+No previous state exists -> WHAM executes both steps
+. *RUN 2: no changes in the upstream data*
++
+WHAM re-runs the first step, which generates the *same* `run_id` as before -> WHAM intelligently skips the second step
+. *RUN 3: new data arrives*
++
+The upstream file has been updated -> WHAM detects the change and re-runs both steps
 
 [NOTE]
 ====
@@ -34,15 +51,15 @@ Teams using WHAM with Argo Workflows typically see a substantial reduction in un
 
 == Overview
 
-WHAM! is a simple, dependency-free, single-binary tool for executing local or single-server workflows, with a simple state model to prevent re-running unnecessary jobs.
+WHAM is a simple, dependency-free, single-binary tool for executing local or single-server workflows, with a simple state model to prevent re-running unnecessary jobs.
 
 It executes tasks (CLI scripts) arranged in a directed acyclic graph (`DAG`). It intelligently decides whether a step needs to be run based on the state of its predecessors, avoiding redundant work. It provides robust error handling and resilience, allowing complex workflows to continue even when non-critical parts fail.
 
-It's designed to be the step-up from a collection of cron jobs and shell scripts, without the overhead of a full-scale distributed orchestrator. WHAM! lets you replace an unmanageable web of inter-dependent scripts with a single, coherent workflow that you can run identically on your local machine for development and as a smart "gatekeeper" inside a production system like Argo Workflows.
+It's designed to be the step-up from a collection of cron jobs and shell scripts, without the overhead of a full-scale distributed orchestrator. WHAM lets you replace an unmanageable web of inter-dependent scripts with a single, coherent workflow that you can run identically on your local machine for development and as a smart "gatekeeper" inside a production system like Argo Workflows.
 
 == Key features
 
-* *Open Source*: WHAM! is Open Source, so you can inspect the code, contribute, or adapt it to your needs
+* *Open Source*: WHAM is Open Source, so you can inspect the code, contribute, or adapt it to your needs
 * *Lightweight and portable*: deploys as a single, dependency-free Go binary
 * *Easy to use*: no complex setup or dependencies. Just write your YAML, run the binary, and watch your workflows execute
 * *Powerful templating*: inject runtime parameters and environment variables directly into your job commands, making workflows dynamic and adaptable
@@ -52,15 +69,15 @@ It's designed to be the step-up from a collection of cron jobs and shell scripts
 
 == Core concepts
 
-At its heart, WHAM!'s logic revolves around a few key concepts that work together to allow to build and execute resilient workflows.
+At its heart, WHAM's logic revolves around a few key concepts that work together to allow to build and execute resilient workflows.
 
 === The `run_id`
 
-The `run_id` is a string that represents the state of a step at a specific point in time. It could be a timestamp, a file hash, a version number, or any other identifier. WHAM! uses the `run_id` to determine if a step or its predecessors have changed. If a step's predecessors have a new `run_id`, the step will be re-executed, otherwise it will be skipped.
+The `run_id` is a string that represents the state of a step at a specific point in time. It could be a timestamp, a file hash, a version number, or any other identifier. WHAM uses the `run_id` to determine if a step or its predecessors have changed. If a step's predecessors have a new `run_id`, the step will be re-executed, otherwise it will be skipped.
 
 === Stateful vs. stateless steps
 
-WHAM! handles two kinds of steps, which determines how their `run_id` is generated and propagated.
+WHAM handles two kinds of steps, which determines how their `run_id` is generated and propagated.
 
 . *Stateful steps*:
 +
@@ -71,19 +88,19 @@ These steps are responsible for determining their own state. After execution, th
 These steps do not generate their own state. Instead, they inherit a `run_id` from their predecessors. A stateless step will only run if the `run_id` derived from its predecessors has changed since its last execution. The derivation of this `run_id` follows specific consistency rules:
 
 * *standard predecessors* must all have the *exact same*, non-empty `run_id`. An inconsistency here will halt the workflow
-* *`can_fail` predecessors* are exempt from the strict consistency check. WHAM! will proceed even if their `run_id` is stale (see below)
+* *`can_fail` predecessors* are exempt from the strict consistency check. WHAM will proceed even if their `run_id` is stale (see below)
 * *stateless source nodes*: steps that are stateless and have no predecessors (often used for utility/trigger tasks) are also exempt, as they do not have a `run_id` to contribute
 
 [NOTE]
 ====
 What about a workflow that is entirely stateless?
 
-In this scenario, where no step generates a `run_id`, WHAM! will execute every step on every run. Since there is no state to compare, there is no basis for "work avoidance". This makes WHAM! a simple and powerful DAG executor for use cases that don't require statefulness.
+In this scenario, where no step generates a `run_id`, WHAM will execute every step on every run. Since there is no state to compare, there is no basis for "work avoidance". This makes WHAM a simple and powerful DAG executor for use cases that don't require statefulness.
 ====
 
 === Resilience features: `retries` and `can_fail`
 
-WHAM! provides two key mechanisms to build robust and resilient workflows: automatic retries for transient errors and the `can_fail` flag for non-critical failures.
+WHAM provides two key mechanisms to build robust and resilient workflows: automatic retries for transient errors and the `can_fail` flag for non-critical failures.
 
 ==== Handling transient failures with retries
 
@@ -100,16 +117,16 @@ For steps that are not essential to the main workflow path (e.g., fetching optio
 
 These two features are designed to work in sequence, giving you fine-grained control over failure handling:
 
-. WHAM! executes a step
+. WHAM executes a step
 . if it fails, it checks the `retries` count. If there are retries left, it waits for `retry_delay` and tries again
 . this loop continues until the step succeeds or all retries are exhausted
-. if all attempts fail, WHAM! then checks the `can_fail` flag
+. if all attempts fail, WHAM then checks the `can_fail` flag
 . if `can_fail: true`, the workflow marks the step as failed and continues
 . if `can_fail: false`, the workflow halts immediately
 
 === Dynamic execution with templating
 
-To make workflows more flexible, WHAM! processes `args` and `env_vars` values as Go templates before executing a step. This allows you to inject dynamic information from the workflow's context, including secrets from the execution environment.
+To make workflows more flexible, WHAM processes `args` and `env_vars` values as Go templates before executing a step. This allows you to inject dynamic information from the workflow's context, including secrets from the execution environment.
 
 The following data is available in the template context:
 
@@ -119,7 +136,7 @@ The following data is available in the template context:
 * `{{.Forced}}`: A boolean (`true` or `false`) indicating if the step was forced to run via `--force`
 * `{{.RunID}}`: The `run_id` of the step from its *previous* successful execution. Useful for passing old state to a script
 
-In addition, two special functions are available for interacting with the environment where WHAM! is running:
+In addition, two special functions are available for interacting with the environment where WHAM is running:
 
 * `{{ getenv "VAR_NAME" "default_value" }}`: Retrieves an environment variable. If the variable is not set, it returns the provided default value. If no default is provided, it returns an empty string
 * `{{ require_env "VAR_NAME" }}`: Retrieves a *mandatory* environment variable. If the variable is not set or is empty, the step will fail before execution. This is the recommended way to inject secrets
@@ -161,7 +178,7 @@ wham_steps:
 
 === Parallel and distributed execution
 
-By default, `wham run all` executes steps sequentially. However, nothing prevents you from running multiple independent steps of the same workflow in parallel by launching multiple WHAM! processes. This can be done on a single machine or across different machines in a distributed environment.
+By default, `wham run all` executes steps sequentially. However, nothing prevents you from running multiple independent steps of the same workflow in parallel by launching multiple WHAM processes. This can be done on a single machine or across different machines in a distributed environment.
 
 The only requirement for parallel execution is that the `metadata_dir` must be on a shared filesystem (e.g., NFS, S3, SMB) accessible to all processes. This ensures that each step can correctly read the state of its predecessors.
 
@@ -177,16 +194,16 @@ The only requirement for parallel execution is that the `metadata_dir` must be o
 
 [NOTE]
 ====
-WHAM! does not provide built-in locking or coordination for concurrent execution of the same step. If you run the same step simultaneously from multiple processes, you are responsible for managing race conditions and ensuring state consistency.
+WHAM does not provide built-in locking or coordination for concurrent execution of the same step. If you run the same step simultaneously from multiple processes, you are responsible for managing race conditions and ensuring state consistency.
 ====
 
 === The DAG (Directed Acyclic Graph)
 
-You define your workflow as a DAG in the `settings.yaml` file. Each step can declare a list of `previous_steps` it depends on. WHAM! uses this graph to determine the correct execution order and to detect impossible workflows (e.g., circular dependencies).
+You define your workflow as a DAG in the `settings.yaml` file. Each step can declare a list of `previous_steps` it depends on. WHAM uses this graph to determine the correct execution order and to detect impossible workflows (e.g., circular dependencies).
 
-== Build and test WHAM!
+== Build and test WHAM
 
-To build and test the WHAM! executable from source, run:
+To build and test the WHAM executable from source, run:
 
 [source,bash]
 ----
@@ -246,24 +263,24 @@ wham_steps:
 ./wham run all --force
 ----
 
-=== Using WHAM! as a Gatekeeper in Argo Workflows
+=== Using WHAM as a gatekeeper in Argo Workflows
 
-One of WHAM!'s most powerful use cases is acting as a smart "gatekeeper" inside a larger orchestrator like Argo Workflows. Instead of building complex logic in Argo, you can use a single WHAM! step to decide if a resource-intensive task should run or its execution can be safely skipped.
+One of WHAM's most powerful use cases is acting as a smart "gatekeeper" inside a larger orchestrator like Argo Workflows. Instead of building complex logic in Argo, you can use a single WHAM step to decide if a resource-intensive task should run or its execution can be safely skipped.
 
-The integration pattern is simple: each step in your Argo Workflow invokes a corresponding `wham run <step_name>` command. WHAM! handles the state logic internally and exits with a success code (`0`) unless a critical error occurs, allowing Argo to manage the high-level flow.
+The integration pattern is simple: each step in your Argo Workflow invokes a corresponding `wham run <step_name>` command. WHAM handles the state logic internally and exits with a success code (`0`) unless a critical error occurs, allowing Argo to manage the high-level flow.
 
-This allows you to leverage WHAM!'s state management directly within Argo:
+This allows you to leverage WHAM's state management directly within Argo:
 
-. An Argo step runs `wham run stateful-step`. WHAM! executes the script, which, based on its internal logic, decides whether to keep its old `run_id` or generate a new one in its state file on a shared volume.
+. An Argo step runs `wham run stateful-step`. WHAM executes the script, which, based on its internal logic, decides whether to keep its old `run_id` or generate a new one in its state file on a shared volume.
 . A subsequent Argo step runs `wham run stateless-step`, which depends on `stateful-step`.
-. WHAM! checks if the `run_id` from `stateful-step` has changed since `stateless-step`'s last successful run.
-* *If the `run_id` is unchanged*, WHAM! skips the script execution for `stateless-step`, updates its state to "skipped", and exits with `code 0`. Argo sees a success and proceeds to the next step
-* *If the `run_id` has changed*, WHAM! executes the script for `stateless-step`:
-** If the script succeeds, WHAM! updates the state to "run", adopts the new `run_id` from its predecessors, and exits with `code 0`
-** If the script fails but has `can_fail: true`, WHAM! preserves the step's previous `run_id`, updates its state to "failed", and still exits with `code 0`, allowing the Argo workflow to continue
-** If the script fails and is critical (`can_fail: false`), WHAM! exits with a non-zero code, which correctly halts the Argo workflow
+. WHAM checks if the `run_id` from `stateful-step` has changed since `stateless-step`'s last successful run.
+* *If the `run_id` is unchanged*, WHAM skips the script execution for `stateless-step`, updates its state to "skipped", and exits with `code 0`. Argo sees a success and proceeds to the next step
+* *If the `run_id` has changed*, WHAM executes the script for `stateless-step`:
+** If the script succeeds, WHAM updates the state to "run", adopts the new `run_id` from its predecessors, and exits with `code 0`
+** If the script fails but has `can_fail: true`, WHAM preserves the step's previous `run_id`, updates its state to "failed", and still exits with `code 0`, allowing the Argo workflow to continue
+** If the script fails and is critical (`can_fail: false`), WHAM exits with a non-zero code, which correctly halts the Argo workflow
 
-To make this pattern work, it is crucial that all WHAM! processes share the same `metadata_dir`. This ensures that every step can read the state files generated by its predecessors. In a Kubernetes environment, this is typically achieved by mounting a shared volume into each container, or by using a network file storage service like S3 or NFS.
+To make this pattern work, it is crucial that all WHAM processes share the same `metadata_dir`. This ensures that every step can read the state files generated by its predecessors. In a Kubernetes environment, this is typically achieved by mounting a shared volume into each container, or by using a network file storage service like S3 or NFS.
 
 .Example: Gating a resource-intensive task in Argo
 [source,yaml]
@@ -319,19 +336,19 @@ The `wham_settings` section in the settings file(s) defines the global parameter
 
 | `data_dir`
 | string
-| The directory where your scripts can read/write data files. WHAM! makes this available via the `VAR_DATA_DIR` environment variable
+| The directory where your scripts can read/write data files. WHAM makes this available via the `VAR_DATA_DIR` environment variable
 
 | `metadata_dir`
 | string
-| The directory where WHAM! stores its own state files. WHAM! makes this available via the `VAR_METADATA_DIR` environment variable
+| The directory where WHAM stores its own state files. WHAM makes this available via the `VAR_METADATA_DIR` environment variable
 
 | `metadata_prefix`
 | string
-| A prefix for all WHAM!-generated state file names (e.g., `wham_`)
+| A prefix for all WHAM-generated state file names (e.g., `wham_`)
 
 | `metadata_suffix`
 | string
-| A suffix for all WHAM!-generated state file names (e.g., `.state`)
+| A suffix for all WHAM-generated state file names (e.g., `.state`)
 
 | `metadata_add_depth`
 | boolean
@@ -403,12 +420,12 @@ The `wham_steps` section in the settings file(s) is a list where each item defin
 
 | `image`
 | string
-| Specifies the container image to be used for this step in an orchestrated environment like Argo Workflows. This is for metadata purposes and is not used by WHAM! itself
+| Specifies the container image to be used for this step in an orchestrated environment like Argo Workflows. This is for metadata purposes and is not used by WHAM itself
 |====
 
 == Usage
 
-WHAM! provides a structured CLI for interacting with your workflow, following an `object verb` pattern similar to tools like `docker`. For convenience, shortcuts are provided for the most common actions.
+WHAM provides a structured CLI for interacting with your workflow, following an `object verb` pattern similar to tools like `docker`. For convenience, shortcuts are provided for the most common actions.
 
 [source,bash]
 ----
@@ -423,7 +440,7 @@ wham [global flags] <command> [subcommand] [args]
 
 === Commands
 
-WHAM! provides a set of commands organized by objects (`step`, `state`, `dag`, `config`). For convenience, the commands which work on the `step` object (`run`, `validate`, etc.) are also available as top-level shortcuts.
+WHAM provides a set of commands organized by objects (`step`, `state`, `dag`, `config`). For convenience, the commands which work on the `step` object (`run`, `validate`, etc.) are also available as top-level shortcuts.
 
 |====
 | Command | Description
@@ -519,10 +536,10 @@ touch source_data/some_file.txt
 
 The first time you run this, both steps will execute. If you run it again immediately, `check-for-new-data` will run, but since its `run_id` (the timestamp) hasn't changed, `process-data` will be skipped.
 
-More examples can be found in the link:test/settings[test settings] and link:examples/settings[example settings] directories, which contains various configurations to demonstrate WHAM!'s capabilities.
+More examples can be found in the link:test/settings[test settings] and link:examples/settings[example settings] directories, which contains various configurations to demonstrate WHAM's capabilities.
 
 == License
 
-WHAM! is Open Source software licensed under the MIT License.
+WHAM is Open Source software licensed under the MIT License.
 
 See the link:LICENSE[LICENSE] file for the full license text.

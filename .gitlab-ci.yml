@@ -1,0 +1,86 @@
+image: golang:latest
+
+variables:
+  GIT_DEPTH: 0
+
+cache:
+  key:
+    files:
+      - go.mod
+  paths:
+    - /go/pkg/mod/
+
+stages:
+  - test
+  - build
+  - release
+
+test:
+  stage: test
+  script:
+    - |
+      FMT_FILES=$(gofmt -l .)
+      if [ -n "${FMT_FILES}" ]; then
+        echo "ERROR: the following files aren't properly formatted:" >&2
+        echo "${FMT_FILES}" >&2
+        exit 1
+      fi
+      go test -v -race -cover ./...
+
+build-branch:
+  stage: build
+  script:
+    - make build
+  artifacts:
+    paths:
+      - wham
+    expire_in: 30 days
+  rules:
+    - if: '$CI_COMMIT_TAG == null'
+
+build-tag:
+  stage: build
+  script:
+    - make build
+    - shasum -a 256 wham > wham.sha256
+  artifacts:
+    paths:
+      - wham
+      - wham.sha256
+    expire_in: never
+  rules:
+    - if: '$CI_COMMIT_TAG'
+
+artifact-upload:
+  stage: release
+  image: curlimages/curl:latest
+  rules:
+    - if: '$CI_COMMIT_TAG'
+  script:
+    - >
+      curl --header "JOB-TOKEN: $CI_JOB_TOKEN"
+      --upload-file wham
+      "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/wham/$CI_COMMIT_TAG/wham"
+    - >
+      curl --header "JOB-TOKEN: $CI_JOB_TOKEN"
+      --upload-file wham.sha256
+      "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/wham/$CI_COMMIT_TAG/wham.sha256"
+  dependencies:
+    - build-tag
+
+release:
+  stage: release
+  image: registry.gitlab.com/gitlab-org/release-cli:latest
+  rules:
+    - if: '$CI_COMMIT_TAG'
+  script:
+    - >
+      release-cli create
+      --name "Release $CI_COMMIT_TAG"
+      --tag-name "$CI_COMMIT_TAG"
+      --description "Release of version $CI_COMMIT_TAG"
+      --assets-link "{\"name\":\"Binary\",\"url\":\"${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/wham/${CI_COMMIT_TAG}/wham\"}"
+      --assets-link "{\"name\":\"SHA256 Checksum\",\"url\":\"${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/wham/${CI_COMMIT_TAG}/wham.sha256\"}"
+      --assets-link "{\"name\":\"Source Code\",\"url\":\"${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/repository/archive.zip?sha=${CI_COMMIT_TAG}\"}"
+  dependencies:
+    - artifact-upload

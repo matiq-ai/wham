@@ -1,0 +1,15 @@
+### TEST: Verify work_dir functionality ###
+
+wham_settings:
+  data_dir: "../states/data"
+  metadata_dir: "../states/metadata"
+
+wham_steps:
+  - name: "workdir_set_to_script_dir"
+    command: ["../../test/scripts/bash/workdir.sh"]
+    # work_dir is set to the script's directory, relative to this config file.
+    work_dir: "../scripts/bash"
+
+  - name: "workdir_not_set"
+    command: ["../../test/scripts/bash/workdir.sh"]
+    # work_dir is omitted, so it should run in the WHAM process's CWD.

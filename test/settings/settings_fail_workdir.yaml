@@ -1,0 +1,8 @@
+wham_settings:
+  data_dir: "../states/data"
+  metadata_dir: "../states/metadata"
+
+wham_steps:
+  - name: "fail_workdir_not_found"
+    command: ["../../test/scripts/bash/workdir.sh"]
+    work_dir: "./non_existent_dir"

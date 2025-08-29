@@ -1,0 +1,20 @@
+### FAIL: Script is not executable ###
+
+wham_settings:
+  data_dir: "../states/data"
+  metadata_dir: "../states/metadata"
+  metadata_prefix: "wham_"
+  metadata_add_depth: true
+  metadata_depth_padding: 3
+  metadata_suffix: ".state"
+
+wham_steps:
+  - name: "fail_script_not_executable"
+    command: ["../../test/scripts/python/not_executable.py"]
+    args: []
+    env_vars: {}
+    can_fail: false
+    is_stateful: false
+    state_file: ""
+    run_id_var: ""
+    previous_steps: []

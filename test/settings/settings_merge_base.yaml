@@ -1,0 +1,14 @@
+### TEST: Base configuration for merging ###
+
+wham_settings:
+  data_dir: "./data_base"
+  metadata_dir: "./metadata_base"
+  shared_args: ["base_arg"]
+
+wham_steps:
+  - name: "step-a"
+    command: ["echo", "step-a-base"]
+    retry_delay: "5s"
+
+  - name: "step-b"
+    command: ["echo", "step-b-untouched"]

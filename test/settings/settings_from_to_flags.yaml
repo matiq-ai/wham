@@ -1,0 +1,32 @@
+### TEST SETTINGS FOR --from AND --to FLAGS ###
+
+wham_settings:
+  data_dir: "../states/data"
+  metadata_dir: "../states/metadata"
+
+wham_steps:
+  # A simple linear DAG: A -> B -> C -> D
+  - name: "step-a"
+    command: ["../../test/scripts/bash/stateful.sh"]
+    env_vars:
+      STATE_FILE: "step-a.state"
+      EXIT_STATUS: "success"
+    is_stateful: true
+    state_file: "step-a.state"
+    run_id_var: "run_id"
+    previous_steps: []
+
+  - name: "step-b"
+    command: ["../../test/scripts/bash/stateless.sh"]
+    is_stateful: false
+    previous_steps: ["step-a"]
+
+  - name: "step-c"
+    command: ["../../test/scripts/bash/stateless.sh"]
+    is_stateful: false
+    previous_steps: ["step-b"]
+
+  - name: "step-d"
+    command: ["../../test/scripts/bash/stateless.sh"]
+    is_stateful: false
+    previous_steps: ["step-c"]

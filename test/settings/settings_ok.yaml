@@ -1,0 +1,96 @@
+### MINIMAL OK FILE ###
+
+# WORKFLOW SETTINGS
+wham_settings:
+  data_dir: "../states/data"
+  metadata_dir: "../states/metadata"
+  metadata_prefix: "wham_"
+  metadata_add_depth: true
+  metadata_depth_padding: 3
+  metadata_suffix: ".state"
+  shared_args: ["{{ if .Forced }}force{{ end }}"]
+
+# WORKFLOW STEP SETTINGS
+wham_steps:
+  # 000 - stateful_sh_succeed (depth 0, data-driven source node)
+  - name: "stateful_sh_succeed"
+    command: ["../../test/scripts/bash/stateful.sh"]
+    args: []
+    env_vars:
+      STATE_FILE: "stateful_sh_succeed.state"
+      # EXIT_STATUS is not needed here as "success" is the default value
+      VAR1: "injected_value_1"
+      VAR2: "22"
+    can_fail: false
+    is_stateful: true
+    state_file: "stateful_sh_succeed.state"
+    run_id_var: "run_id"
+    previous_steps: []
+  # 001 - stateless_sh_succeed (depth 1, propagates run_id)
+  - name: "stateless_sh_succeed"
+    command: ["../../test/scripts/bash/stateless.sh"]
+    args: []
+    # env_vars is intentionally empty/null for this test case
+    # to ensure the parser handles it correctly.
+    env_vars: {}
+    can_fail: false
+    is_stateful: false
+    state_file: ""
+    run_id_var: ""
+    previous_steps:
+    - "stateful_sh_succeed"
+  # 002 - stateless_sh_maybe_fail (depth 2, propagates run_id, can fail)
+  - name: "stateless_sh_maybe_fail"
+    command: ["../../test/scripts/bash/stateless.sh"]
+    args: []
+    env_vars:
+      # STATE_FILE is not needed here, as this is a stateless step
+      EXIT_STATUS: "random"  # <- can be "success", "random" or "fail"
+    can_fail: true
+    is_stateful: false
+    state_file: ""
+    run_id_var: ""
+    previous_steps:
+    - "stateless_sh_succeed"
+    - "stateful_sh_succeed"
+  # 000 - stateless_py_succeed_no_deps (depth 0, utility/orchestration source node)
+  - name: "stateless_py_succeed_no_deps"
+    command: ["../../test/scripts/python/stateless.py"]
+    args: []
+    env_vars:
+      EXIT_STATUS: "success"
+    can_fail: false
+    is_stateful: false
+    state_file: ""
+    run_id_var: ""
+    previous_steps: []
+  # 001 - stateless_with_params (depth 1, tests param injection)
+  - name: "stateless_with_params"
+    command: ["../../test/scripts/bash/stateless.sh"]
+    args: ["--local-param", "value"]
+    env_vars:
+      # This step must succeed
+      EXIT_STATUS: "success"
+    can_fail: false
+    is_stateful: false
+    state_file: ""
+    run_id_var: ""
+    previous_steps:
+    - "stateful_sh_succeed"
+  # 003 - final_aggregator_step (depth 3, tests hybrid dependency)
+  - name: "final_aggregator_step"
+    command: ["../../test/scripts/bash/stateless.sh"]
+    args: []
+    env_vars:
+      # This step must succeed to confirm the logic works.
+      EXIT_STATUS: "success"
+    can_fail: false
+    is_stateful: false
+    state_file: ""
+    run_id_var: ""
+    previous_steps:
+    - "stateful_sh_succeed"
+    - "stateless_sh_succeed" # Inherits run_id from these three...
+    - "stateless_sh_maybe_fail"
+    - "stateless_py_succeed_no_deps" # ...while using this one as a simple completion gate
+    - "stateless_with_params"

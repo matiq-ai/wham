@@ -1,0 +1,437 @@
+### PROD SETTINGS FILE ###
+
+# WORKFLOW SETTINGS
+### NOTES:
+### - the data files will be saved in the "/mnt/storage/data" directory
+### - the metadata files will be saved in the "/mnt/storage/metadata" directory
+### - the metadata files will be saved with a "wham_" prefix
+### - the metadata files will be saved with a ".state" suffix
+### - the metadata files will have a depth padding of 3 characters
+### - the shared argument "force" is injected only if the step is run with the "--force" flag
+###   e.g. `wham step run --force --config settings_prod.yaml <step_name|all>`
+wham_settings:
+  data_dir: "/mnt/storage/data"
+  metadata_dir: "/mnt/storage/metadata"
+  metadata_prefix: "wham_"
+  metadata_suffix: ".state"
+  metadata_add_depth: true
+  metadata_depth_padding: 3
+  shared_args: ["{{ if .Forced }}force{{ end }}"]
+
+### NOTES:
+### - the following are shared environment variables for the workflow
+### - these variables will be used across multiple steps in the workflow
+###   and can be overridden by specific steps if needed
+### - the variables are defined in a YAML anchor format for reuse
+### - the anchor allows us to define a set of common variables that can be
+###   referenced in multiple places without repeating the definitions
+### - the variables are defined as a list of key-value pairs
+x-common-images:
+  data_integration_image: &data_integration_image "your-registry/data-integration:v1.2.0"
+  ai_training_image: &ai_training_image "your-registry/ai-training:v0.9.5"
+x-common-download-vars: &common_download_vars
+  DATA_FOLDER_PATH: "{{ .Config.WhamSettings.DataDir }}"
+  METADATA_FOLDER_PATH: "{{ .Config.WhamSettings.MetadataDir }}"
+  EXTRACT_FOLDER_PATH: "{{ .Config.WhamSettings.DataDir }}/extract"
+x-common-postgres-vars: &common_postgres_vars
+  PG_DB_HOST: "postgres.pg-namespace"
+  # PG_DB_PORT will be set to 5432 by default, but can be overridden by the environment variable value
+  PG_DB_PORT: '{{ getenv "PG_DB_PORT" "5432" }}'
+  # PG_DB_USER and PG_DB_PASSWORD will be injected via a secret in the pod namespace
+  PG_DB_USER: '{{ require_env "PG_DB_USER" }}'
+  PG_DB_PASSWORD: '{{ require_env "PG_DB_PASSWORD" }}'
+  PG_DB_NAME: "postgres_db"
+  # PG_DB_SCHEMA will be set to public by default, but can be overridden by the environment variable value
+  PG_DB_SCHEMA: '{{ getenv "PG_DB_SCHEMA" "public" }}'
+x-common-clickhouse-vars: &common_clickhouse_vars
+  CH_DB_HOST: "clickhouse.ch-namespace"
+  CH_DB_PORT: "9000"
+  CH_DB_NAME: "clickhouse_db"
+  # CH_DB_USER and CH_DB_PASSWORD will be injected via a secret in the pod namespace
+  CH_DB_USER: '{{ require_env "CH_DB_USER" }}'
+  CH_DB_PASSWORD: '{{ require_env "CH_DB_PASSWORD" }}'
+x-common-clustering-vars: &common_clustering_vars
+  EXT_DATA_DIR: "{{ .Config.WhamSettings.DataDir }}"
+  EXT_METADATA_DIR: "{{ .Config.WhamSettings.MetadataDir }}"
+  STEP_SCRIPT_DIR: "/home/user/nested_users_clustering"
+  DATA_EXTRACTION_STEP: "pg_table_chunk_to_parquet"
+x-common-s3-vars: &common_s3_vars
+  S3_ALIAS: "s3"
+  S3_SERVER: "http://minio.minio:9000"
+  S3_SECURE: "false"
+  S3_API_VERSION: "S3v4"
+  # S3_ACCESS_KEY and S3_SECRET_KEY will be injected via a secret in the pod namespace
+  S3_ACCESS_KEY: '{{ require_env "S3_ACCESS_KEY" }}'
+  S3_SECRET_KEY: '{{ require_env "S3_SECRET_KEY" }}'
+x-common-recsys-vars: &common_recsys_vars
+  MLFLOW_TRACKING_URI: "http://mlflow-tracking.mlflow"
+  ### DEFAULT SETTINGS - START ###
+  MODEL_TUNING_N_TRIALS: "1000"
+  MODEL_TUNING_MIN_LATENT_FACTORS: "1536"
+  MODEL_TUNING_MAX_LATENT_FACTORS: "4096"
+  MODEL_TUNING_MIN_ITERATIONS: "50"
+  MODEL_TUNING_MAX_ITERATIONS: "250"
+  MODEL_USE_GPU: "true"
+  ### DEFAULT SETTINGS - END ###
+x-common-churn-prediction-vars: &common_churn_prediction_vars
+  ### DEFAULT SETTINGS - START ###
+  CHURN_PRED_TOP_N_FEATURES: "20"
+  ### DEFAULT SETTINGS - END ###
+
+# WORKFLOW STEP SETTINGS
+wham_steps:
+  ### DATA ACQUISITION STAGE - START ###
+  ### NOTES:
+  ### - this step is stateful, i.e. it generates a state file ("check_source_data.state")
+  ###   with a "run_id" based on upstream data
+  ### - a change in this "run_id" will trigger the execution of its stateless dependents,
+  ###   acting as a gatekeeper for that branch of the workflow DAG
+  - name: "check_source_data"
+    work_dir: "/home/user/scripts/python/postgres"
+    command: ["/home/user/scripts/python/postgres/check_data.py"]
+    args: []    
+    env_vars: *common_download_vars
+    image: *data_integration_image
+    is_stateful: true
+    state_file: "check_source_data.state"
+    run_id_var: "source_data_id"
+    previous_steps: []
+  ### NOTES:
+  ### - this step is stateless, i.e. its execution depends entirely on its predecessor
+  ### - it will run only if "check_source_data" generates a new "run_id", and its execution
+  ###   will be skipped if the "run_id" remains the same
+  ### - this behaviour creates a chain reaction, where the first stateful step 
+  ###   determines whether to run or skip execution for subsequent stateless steps
+  - name: "download_source_data"
+    work_dir: "/home/user/scripts/python/postgres"
+    command: ["/home/user/scripts/python/postgres/download_data.py"]
+    args: []
+    env_vars: *common_download_vars
+    image: *data_integration_image
+    can_fail: false
+    is_stateful: false
+    state_file: ""
+    run_id_var: ""
+    previous_steps:
+    - "check_source_data"
+  - name: "create_metadata_files"
+    work_dir: "/home/user/scripts/other/distinct_files"
+    command: ["/home/user/scripts/other/distinct_files/distinct_files.sh"]
+    args: []
+    env_vars: *common_download_vars
+    image: *data_integration_image
+    can_fail: false
+    is_stateful: false
+    state_file: ""
+    run_id_var: ""
+    previous_steps:
+    - "download_source_data"
+  - name: "load_data_to_postgres"
+    work_dir: "/home/user/scripts/postgres/load_data"
+    command: ["/home/user/scripts/postgres/load_data/load_to_pg.sh"]
+    args: ["exported"]
+    env_vars: *common_postgres_vars
+    image: *data_integration_image
+    can_fail: false
+    is_stateful: false
+    state_file: ""
+    run_id_var: ""
+    previous_steps:
+    - "create_metadata_files"
+  ### NOTES:
+  ### - this is a fan-out step, i.e. multiple subsequent steps depend on it
+  ###   and can run in parallel when run in an orchestrator (e.g., Argo Workflows)
+  - name: "dbt_fs_postgres"
+    work_dir: "/home/user/scripts/dbt/fs_pg"
+    command: ["/home/user/scripts/dbt/fs_pg/dbt.sh"]
+    args: []
+    env_vars: *common_postgres_vars
+    image: *data_integration_image
+    can_fail: false
+    is_stateful: false
+    state_file: ""
+    run_id_var: ""
+    previous_steps:
+    - "load_data_to_postgres"
+  ### DATA EXPORT TO S3 STAGE - START ###
+  ### DATA ACQUISITION STAGE - END ###
+  - name: "pg_orders_to_parquet"
+    work_dir: "/home/user/scripts/python/postgres"
+    command: ["/home/user/scripts/python/postgres/pg_table_chunk_to_parquet.py"]
+    args: []
+    env_vars:
+      <<: [*common_postgres_vars, *common_s3_vars]
+      DB_TABLE: "denormalized_orders"
+    image: *data_integration_image
+    can_fail: false
+    is_stateful: false
+    state_file: ""
+    run_id_var: ""
+    previous_steps:
+    - "dbt_fs_postgres"
+  - name: "pg_business_entities_to_parquet"
+    work_dir: "/home/user/scripts/python/postgres"
+    command: ["/home/user/scripts/python/postgres/pg_table_to_parquet.py"]
+    args: []
+    env_vars:
+      <<: [*common_postgres_vars, *common_s3_vars]
+      DB_TABLE: "business_entities"
+      DB_TABLE_COLUMNS: "*"
+      OUTPUT_FILES_DIR: "business_entities_files"
+      OUTPUT_FILE_NAME: "business_entities.parquet"
+    image: *data_integration_image
+    can_fail: false
+    is_stateful: false
+    state_file: ""
+    run_id_var: ""
+    previous_steps:
+    - "dbt_fs_postgres"
+  ### DATA EXPORT TO S3 STAGE - END ###
+  ### CLUSTERING STAGE - START ###
+  - name: "users_clustering"
+    work_dir: "/home/user/scripts/python/model_training"
+    command: ["/home/user/scripts/python/model_training/train_wrapper_date.py"]
+    args: []
+    env_vars:
+      STEP_SCRIPT_DIR: "/home/user/clustering"
+      STEP_SCRIPT_ACTION: "./users_clustering.py"
+      DATA_EXTRACTION_STEP: "pg_table_chunk_to_parquet"
+    image: *ai_training_image
+    can_fail: false
+    is_stateful: false
+    state_file: ""
+    run_id_var: ""
+    previous_steps:
+    - "pg_orders_to_parquet"
+  ### NOTES:
+  ### - this step is allowed to fail, if it does the old version of its data
+  ###   will be used for training by the followings steps
+  - name: "get_additional_data"
+    work_dir: "/home/user/nested_users_clustering"
+    command: ["/home/user/nested_users_clustering/additional_data_download.py"]
+    args: []
+    env_vars: *common_clustering_vars
+    can_fail: true
+    is_stateful: false
+    state_file: ""
+    run_id_var: ""
+    previous_steps:
+    - "pg_business_entities_to_parquet"
+  - name: "transform_additional_data"
+    work_dir: "/home/user/nested_users_clustering"
+    command: ["/home/user/nested_users_clustering/additional_data_transform.py"]
+    args: []
+    env_vars: *common_clustering_vars
+    can_fail: false
+    is_stateful: false
+    state_file: ""
+    run_id_var: ""
+    previous_steps:
+    - "get_additional_data"
+  - name: "create_autoencoder_input"
+    work_dir: "/home/user/scripts/python/model_training"
+    command: ["/home/user/scripts/python/model_training/train_wrapper_date.py"]
+    args: []
+    env_vars:
+      <<: *common_clustering_vars
+      STEP_SCRIPT_ACTION: "./merge_business_entities_orders.py"
+    can_fail: false
+    is_stateful: false
+    state_file: ""
+    run_id_var: ""
+    previous_steps:
+    - "transform_additional_data"
+  - name: "create_business_entities_clusters"
+    work_dir: "/home/user/scripts/python/model_training"
+    command: ["/home/user/scripts/python/model_training/train_wrapper_date.py"]
+    args: []
+    env_vars:
+      <<: *common_clustering_vars
+      STEP_SCRIPT_ACTION: "./autoencoder_cluster.py"
+    can_fail: false
+    is_stateful: false
+    state_file: ""
+    run_id_var: ""
+    previous_steps:
+    - "create_autoencoder_input"
+  - name: "users_nested_clustering"
+    work_dir: "/home/user/scripts/python/model_training"
+    command: ["/home/user/scripts/python/model_training/train_wrapper_date.py"]
+    args: []
+    env_vars:
+      <<: *common_clustering_vars
+      STEP_SCRIPT_ACTION: "./nested_clustering_autoencoder.py"
+    can_fail: false
+    is_stateful: false
+    state_file: ""
+    run_id_var: ""
+    previous_steps:
+    - "create_business_entities_clusters"
+  ### CLUSTERING STAGE - END ###
+  ### CHURN PREDICTION STAGE - START ###
+  - name: "get_daily_orders_from_db"
+    work_dir: "/home/user/churn_prediction"
+    command: ["/home/user/churn_prediction/get_daily_orders_from_db.py"]
+    args: ["--output-filename=df_daily_orders_db.parquet"]
+    env_vars: *common_churn_prediction_vars
+    can_fail: false
+    is_stateful: false
+    state_file: ""
+    run_id_var: ""
+    previous_steps:
+    - "dbt_fs_postgres"
+  - name: "generate_train_and_test_dataset"
+    work_dir: "/home/user/churn_prediction"
+    command: ["/home/user/churn_prediction/generate_train_and_test_dataset.py"]
+    args:
+    - --input-dataset-path=get_daily_orders_from_db/df_daily_orders_db.parquet
+    - --out-train-set-filename=df_features_train.parquet
+    - --out-test-set-filename=df_features_test.parquet
+    env_vars: *common_churn_prediction_vars
+    can_fail: false 
+    is_stateful: false
+    state_file: ""
+    run_id_var: ""
+    previous_steps:
+    - get_daily_orders_from_db
+  ### NOTES:
+  ### - this step has a command argument that is injected
+  ###   from its environment variable "CHURN_PRED_TOP_N_FEATURES"
+  - name: "train_churn_prediction_model"
+    work_dir: "/home/user/churn_prediction"
+    command: ["/home/user/churn_prediction/train_churn_prediction_model.py"]
+    args:
+    - --train-set-filepath=generate_train_and_test_dataset/df_features_train.parquet
+    - --test-set-filepath=generate_train_and_test_dataset/df_features_test.parquet
+    - --out-model-filename=churn_prediction_model.pickle
+    - --top-n-features={{ .Step.EnvVars.CHURN_PRED_TOP_N_FEATURES }}
+    env_vars: *common_churn_prediction_vars
+    can_fail: false
+    is_stateful: false
+    state_file: ""
+    run_id_var: ""
+    previous_steps:
+    - generate_train_and_test_dataset
+  - name: "generate_features_for_churn_prediction"
+    work_dir: "/home/user/churn_prediction"
+    command: ["/home/user/churn_prediction/generate_features_for_churn_prediction.py"]
+    args:
+    - --input-dataset-path=get_daily_orders_from_db/df_daily_orders_db.parquet
+    - --out-feature-set-filename=df_features_prediction.parquet
+    env_vars: *common_churn_prediction_vars
+    can_fail: false 
+    is_stateful: false
+    state_file: ""
+    run_id_var: ""
+    previous_steps:
+    - train_churn_prediction_model
+  - name: "make_churn_prediction"
+    work_dir: "/home/user/scripts/python/model_training"
+    command: ["/home/user/scripts/python/model_training/train_wrapper_date.py"]
+    args: []
+    env_vars: *common_churn_prediction_vars
+    can_fail: false
+    is_stateful: false
+    state_file: ""
+    run_id_var: ""
+    previous_steps:
+    - generate_features_for_churn_prediction
+  ### CHURN PREDICTION STAGE - END ###
+  ### RECSYS TRAINING STAGE - START ###
+  - name: "recsys_train_ppuu"
+    work_dir: "/home/user/scripts/bash/model_training"
+    command: ["/home/user/scripts/bash/model_training/train_wrapper_copy.sh"]
+    args: []
+    env_vars:
+      <<: [ *common_recsys_vars, *common_s3_vars ]
+      MODEL_PREDICTION_TYPE: "ppuu"
+      MODEL_TUNING_AT_K_EVAL: "500"
+    can_fail: false
+    is_stateful: false
+    state_file: ""
+    run_id_var: ""
+    previous_steps:
+    - "pg_orders_to_parquet"
+  - name: "recsys_train_paua"
+    work_dir: "/home/user/scripts/bash/model_training"
+    command: ["/home/user/scripts/bash/model_training/train_wrapper_copy.sh"]
+    args: []
+    env_vars:
+      <<: [ *common_recsys_vars, *common_s3_vars ]
+      MODEL_PREDICTION_TYPE: "paua"
+      MODEL_TUNING_AT_K_EVAL: "50"
+    can_fail: false
+    is_stateful: false
+    state_file: ""
+    run_id_var: ""
+    previous_steps:
+    - "pg_orders_to_parquet"
+  ### RECSYS TRAINING STAGE - END ###
+  ### LOAD AI GENERATED DATA TO PG STAGE - START ###
+  ### NOTES:
+  ### - this is a fan-in step, i.e. it will run after both the "recsys_train_ppuu"
+  ###   and "recsys_train_paua" steps have completed successfully
+  - name: "models_to_postgres"
+    work_dir: "/home/user/scripts/bash/model_to_db"
+    command: ["/home/user/scripts/bash/model_to_db/models_to_db.sh"]
+    args: []
+    env_vars:
+      <<: [*common_s3_vars, *common_postgres_vars]
+      RECSYS_SYSPATH: "/home/user"
+    can_fail: false
+    is_stateful: false
+    state_file: ""
+    run_id_var: ""
+    previous_steps:
+    - "recsys_train_ppuu"
+    - "recsys_train_paua"
+  - name: "ai_load_data_to_postgres"
+    work_dir: "/home/user/scripts/postgres/load_data"
+    command: ["/home/user/scripts/postgres/load_data/load_to_pg.sh"]
+    args: ["additional"]
+    env_vars: *common_postgres_vars
+    can_fail: false
+    is_stateful: false
+    state_file: ""
+    run_id_var: ""
+    previous_steps:
+    - "users_clustering"
+    - "users_nested_clustering"
+    - "make_churn_prediction"
+  - name: "ai_dbt_fs_postgres"
+    work_dir: "/home/user/scripts/dbt/fs_pg_ai"
+    command: ["/home/user/scripts/dbt/fs_pg_ai/dbt.sh"]
+    args: []
+    env_vars: *common_postgres_vars
+    can_fail: false
+    is_stateful: false
+    state_file: ""
+    run_id_var: ""
+    previous_steps:
+    - "ai_load_data_to_postgres"
+  ### LOAD AI GENERATED DATA TO PG STAGE - END ###
+  ### POPULATE CH DB STAGE - START ###
+  - name: "load_to_clickhouse"
+    work_dir: "/home/user/scripts/clickhouse/load_data"
+    command: ["/home/user/scripts/clickhouse/load_data/load_to_ch.sh"]
+    args: ["all"]
+    env_vars:
+      <<: [ *common_postgres_vars, *common_clickhouse_vars ]
+    can_fail: false
+    is_stateful: false
+    state_file: ""
+    run_id_var: ""
+    previous_steps:
+    - "ai_dbt_fs_postgres"
+  - name: "dbt_fs_clickhouse"
+    work_dir: "/home/user/scripts/dbt/fs_ch"
+    command: ["/home/user/scripts/dbt/fs_ch/dbt.sh"]
+    args: []
+    env_vars: *common_clickhouse_vars
+    can_fail: false
+    is_stateful: false
+    state_file: ""
+    run_id_var: ""
+    previous_steps:
+    - "load_to_clickhouse"
+  ### POPULATE CH DB STAGE - END ###

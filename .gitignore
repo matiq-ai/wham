@@ -1,0 +1,25 @@
+# Binaries for programs and plugins
+wham
+wham.exe
+wham_test_binary
+
+# Test state files
+test/states/data/*
+test/states/metadata/*
+!/test/states/data/.gitkeep
+!/test/states/metadata/.gitkeep
+
+# Go build cache
+*.test
+*.prof
+go.work.sum
+
+# VS Code settings
+.vscode/
+
+# Settings files
+/settings.yaml
+/settings_common.yaml
+/settings_default.yaml
+/settings_dev.yaml
+/settings_prod.yaml

@@ -1,0 +1,111 @@
+name: Go Build and Release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Check formatting
+        run: |
+          FMT_FILES=$(gofmt -l .)
+          if [ -n "${FMT_FILES}" ]; then
+            echo "ERROR: the following files aren't properly formatted:"
+            echo "${FMT_FILES}"
+            exit 1
+          fi
+
+      - name: Run tests
+        run: go test -v -race -cover ./...
+
+  build:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+      
+      - name: Build application
+        run: make build
+
+      - name: Generate checksum
+        if: startsWith(github.ref, 'refs/tags/')
+        run: shasum -a 256 wham > wham.sha256
+
+      - name: Upload wham artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wham-binary
+          path: wham
+          retention-days: 30
+
+      - name: Upload checksum artifact
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v4
+        with:
+          name: wham-checksum
+          path: wham.sha256
+
+  create-release:
+    runs-on: ubuntu-latest
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+
+    permissions:
+      contents: write
+      
+    steps:
+      - name: Download wham binary
+        uses: actions/download-artifact@v4
+        with:
+          name: wham-binary
+
+      - name: Download wham checksum
+        uses: actions/download-artifact@v4
+        with:
+          name: wham-checksum
+
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create ${{ github.ref_name }} \
+            --title "Release ${{ github.ref_name }}" \
+            --notes "Release di produzione per la versione ${{ github.ref_name }}" \
+            wham wham.sha256

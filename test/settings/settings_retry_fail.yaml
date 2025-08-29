@@ -1,0 +1,18 @@
+### TEST: A step that fails and exhausts all retries ###
+
+wham_settings:
+  data_dir: "../states/data"
+  metadata_dir: "../states/metadata"
+  metadata_prefix: "wham_"
+  metadata_suffix: ".state"
+
+wham_steps:
+- name: "retry_step_failure"
+  command: ["../../test/scripts/bash/stateless.sh"]
+  env_vars:
+    SIMULATE_FAIL_COUNT: "3" # This script will try to fail 3 times.
+    COUNTER_FILE: "retry_step_failure_counter.txt"
+  retries: 1 # We only allow 1 retry (2 total attempts). This is not enough.
+  retry_delay: "100ms"
+  can_fail: false # This should halt the workflow.
+  previous_steps: []

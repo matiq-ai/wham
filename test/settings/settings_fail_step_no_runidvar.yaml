@@ -1,0 +1,9 @@
+wham_settings:
+  data_dir: "../states/data"
+  metadata_dir: "../states/metadata"
+
+wham_steps:
+  - name: "invalid_step"
+    command: ["echo", "hello"]
+    is_stateful: true
+    state_file: "some.state"

@@ -1,0 +1,43 @@
+### DEBUG OVERLAY SETTINGS FILE ###
+
+### NOTES:
+### - the variables defined below will override those defined in the "settings_prod.yaml" file
+###   WHEN wham is run as follows:
+###   `wham step run --config settings_prod.yaml --config settings_debug.yaml <step_name|all>`
+
+# WORKFLOW SETTINGS
+wham_settings:
+  data_dir: "/tmp/data"
+  metadata_dir: "/tmp/metadata"
+  metadata_prefix: "wham_"
+  metadata_suffix: ".txt"
+  metadata_add_depth: true
+  metadata_depth_padding: 3
+  shared_args: [] # <- This will keep the existing shared args from settings_prod.yaml
+
+# WORKFLOW STEP SETTINGS
+wham_steps:
+  # For debug, we just want to use a fake script and change the run_id variable.
+  # All other properties (work_dir, env_vars, is_stateful, etc.) are inherited
+  # from settings_prod.yaml.
+  - name: "check_source_data"
+    command: ["/home/user/scripts/python/postgres/fake_check_data.py"]
+    run_id_var: "another_run_id"
+  # The following will only override the env_vars defined here, not the entire step.
+  - name: "recsys_train_ppuu"
+    env_vars:
+      MODEL_TUNING_N_TRIALS: "1"
+      MODEL_TUNING_MIN_LATENT_FACTORS: "32"
+      MODEL_TUNING_MAX_LATENT_FACTORS: "32"
+      MODEL_TUNING_MIN_ITERATIONS: "5"
+      MODEL_TUNING_MAX_ITERATIONS: "5"
+  - name: "recsys_train_paua"
+    env_vars:
+      MODEL_TUNING_N_TRIALS: "1"
+      MODEL_TUNING_MIN_LATENT_FACTORS: "32"
+      MODEL_TUNING_MAX_LATENT_FACTORS: "32"
+      MODEL_TUNING_MIN_ITERATIONS: "5"
+      MODEL_TUNING_MAX_ITERATIONS: "5"
+  - name: "train_churn_prediction_model"
+    env_vars:
+      CHURN_PRED_TOP_N_FEATURES: "1"

@@ -1,0 +1,6 @@
+wham_settings:
+  data_dir: "../states/data"
+  metadata_dir: "../states/metadata"
+
+wham_steps:
+  - command: ["echo", "hello"]

@@ -1,0 +1,63 @@
+{
+  "wham_settings": {
+    "data_dir": "{{.ConfigDir}}/data_base",
+    "metadata_dir": "{{.ConfigDir}}/metadata_override",
+    "metadata_prefix": "",
+    "metadata_suffix": "",
+    "metadata_add_depth": false,
+    "metadata_depth_padding": 0,
+    "shared_args": [
+      "base_arg"
+    ]
+  },
+  "wham_steps": [
+    {
+      "name": "step-a",
+      "command": [
+        "echo",
+        "step-a-overridden"
+      ],
+      "args": null,
+      "env_vars": null,
+      "retries": 0,
+      "retry_delay": 10000000000,
+      "can_fail": false,
+      "is_stateful": false,
+      "state_file": "",
+      "run_id_var": "",
+      "previous_steps": null
+    },
+    {
+      "name": "step-b",
+      "command": [
+        "echo",
+        "step-b-untouched"
+      ],
+      "args": null,
+      "env_vars": null,
+      "retries": 0,
+      "retry_delay": 0,
+      "can_fail": false,
+      "is_stateful": false,
+      "state_file": "",
+      "run_id_var": "",
+      "previous_steps": null
+    },
+    {
+      "name": "step-c",
+      "command": [
+        "echo",
+        "step-c-new"
+      ],
+      "args": null,
+      "env_vars": null,
+      "retries": 0,
+      "retry_delay": 0,
+      "can_fail": false,
+      "is_stateful": false,
+      "state_file": "",
+      "run_id_var": "",
+      "previous_steps": null
+    }
+  ]
+}

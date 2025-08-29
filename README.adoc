@@ -1,0 +1,500 @@
+= WHAM! - A smart and stateful task runner for local workflows
+
+:toc: left
+:toclevels: 2
+:source-highlighter: rouge
+
+> Workflows Happen, Automate More!
+
+WHAM! is a simple, dependency-free, single-binary tool for executing local or single-server workflows, with a simple state model to prevent re-running unnecessary jobs.
+
+It executes tasks (CLI scripts) arranged in a directed acyclic graph (`DAG`). It intelligently decides whether a step needs to be run based on the state of its predecessors, avoiding redundant work. It provides robust error handling and resilience, allowing complex workflows to continue even when non-critical parts fail.
+
+It's designed to be the step-up from a collection of cron jobs and shell scripts, without the overhead of a full-scale distributed orchestrator. WHAM! lets you replace an unmanageable web of inter-dependent scripts with a single, coherent workflow that you can run identically on your local machine for development and as a smart "gatekeeper" inside a production system like Argo Workflows.
+
+== Key features
+
+* *Open Source*: WHAM! is Open Source, so you can inspect the code, contribute, or adapt it to your needs
+* *Lightweight and portable*: deploys as a single, dependency-free Go binary
+* *Easy to use*: no complex setup or dependencies. Just write your YAML, run the binary, and watch your workflows execute
+* *Powerful templating*: inject runtime parameters and environment variables directly into your job commands, making workflows dynamic and adaptable
+* *Stateful execution with smart work avoidance*: natively handles stateful and stateless steps, automatically skipping tasks that don't need to be re-run
+* *Resilient and robust*: built-in support for automatic retries and non-critical failures, allowing workflows to continue even when some steps fail
+* *Plays well with others*: designed to act as a lightweight gatekeeper inside larger orchestrators. In a production Argo Workflow, a single WHAM step can determine if the main, resource-intensive task needs to be run, saving significant costs and time
+
+== Core concepts
+
+At its heart, WHAM!'s logic revolves around a few key concepts that work together to allow to build and execute resilient workflows.
+
+=== The `run_id`
+
+The `run_id` is a string that represents the state of a step at a specific point in time. It could be a timestamp, a file hash, a version number, or any other identifier. WHAM! uses the `run_id` to determine if a step or its predecessors have changed. If a step's predecessors have a new `run_id`, the step will be re-executed, otherwise it will be skipped.
+
+=== Stateful vs. stateless steps
+
+WHAM! handles two kinds of steps, which determines how their `run_id` is generated and propagated.
+
+. *Stateful steps*:
++
+These steps are responsible for determining their own state. After execution, they must write their new `run_id` to a designated `state_file`. A stateful step is typically a source node in the DAG that introduces a new version of data into the workflow (e.g., checking for a new daily data file and using its timestamp as the `run_id`).
+
+. *Stateless steps*:
++
+These steps do not generate their own state. Instead, they inherit a `run_id` from their predecessors. A stateless step will only run if the `run_id` derived from its predecessors has changed since its last execution. The derivation of this `run_id` follows specific consistency rules:
+
+* *standard predecessors* must all have the *exact same*, non-empty `run_id`. An inconsistency here will halt the workflow
+* *`can_fail` predecessors* are exempt from the strict consistency check. WHAM! will proceed even if their `run_id` is stale (see below)
+* *stateless source nodes*: steps that are stateless and have no predecessors (often used for utility/trigger tasks) are also exempt, as they do not have a `run_id` to contribute
+
+[NOTE]
+====
+What about a workflow that is entirely stateless?
+
+In this scenario, where no step generates a `run_id`, WHAM! will execute every step on every run. Since there is no state to compare, there is no basis for "work avoidance". This makes WHAM! a simple and powerful DAG executor for use cases that don't require statefulness.
+====
+
+=== Resilience features: `retries` and `can_fail`
+
+WHAM! provides two key mechanisms to build robust and resilient workflows: automatic retries for transient errors and the `can_fail` flag for non-critical failures.
+
+==== Handling transient failures with retries
+
+For temporary issues like network glitches, API rate limits, or a momentarily unavailable database, you can configure a step to automatically retry upon failure, by configuring the `retries` and `retry_delay` parameters in the step definition:
+
+* `retries`: the number of additional attempts to make after the first one fails
+* `retry_delay`: the fixed time to wait between attempts (e.g., `5s`, `1m`)
+
+==== Ignoring non-critical failures
+
+For steps that are not essential to the main workflow path (e.g., fetching optional metadata), you can set `can_fail: true`. If the step fails (after all retries have been exhausted), the workflow will not halt. The step's state is marked as `"failed"`, but it crucially retains its *last known successful `run_id`*. This allows subsequent steps to proceed using the last available "good" data from the failed branch.
+
+==== How they work together
+
+These two features are designed to work in sequence, giving you fine-grained control over failure handling:
+
+. WHAM! executes a step
+. if it fails, it checks the `retries` count. If there are retries left, it waits for `retry_delay` and tries again
+. this loop continues until the step succeeds or all retries are exhausted
+. if all attempts fail, WHAM! then checks the `can_fail` flag
+. if `can_fail: true`, the workflow marks the step as failed and continues
+. if `can_fail: false`, the workflow halts immediately
+
+=== Dynamic execution with templating
+
+To make workflows more flexible, WHAM! processes `args` and `env_vars` values as Go templates before executing a step. This allows you to inject dynamic information from the workflow's context, including secrets from the execution environment.
+
+The following data is available in the template context:
+
+* `{{.Step}}`: The current step's own configuration object (e.g., `{{.Step.Name}}`)
+* `{{.Config}}`: The entire global configuration object (e.g., `{{.Config.WhamSettings.DataDir}}`)
+* `{{.StepsMap}}`: A map of all steps in the workflow, allowing you to access another step's configuration (e.g., `{{(index .StepsMap "another-step").WorkDir}}`)
+* `{{.Forced}}`: A boolean (`true` or `false`) indicating if the step was forced to run via `--force`
+* `{{.RunID}}`: The `run_id` of the step from its *previous* successful execution. Useful for passing old state to a script
+
+In addition, two special functions are available for interacting with the environment where WHAM! is running:
+
+* `{{ getenv "VAR_NAME" "default_value" }}`: Retrieves an environment variable. If the variable is not set, it returns the provided default value. If no default is provided, it returns an empty string
+* `{{ require_env "VAR_NAME" }}`: Retrieves a *mandatory* environment variable. If the variable is not set or is empty, the step will fail before execution. This is the recommended way to inject secrets
+
+.Example: Passing a value from `env_vars` to a command-line parameter
+[source,yaml]
+----
+wham_steps:
+- name: "train_model"
+  command: ["./scripts/train.py", "--top-features={{.Step.EnvVars.TOP_N_FEATURES}}"]
+  env_vars:
+    TOP_N_FEATURES: "20"
+----
+
+.Example: Injecting a database password from a Kubernetes secret
+[source,yaml]
+----
+x-common-postgres-vars: &common_postgres_vars
+  PG_DB_HOST: "postgres.my-namespace"
+  PG_DB_USER: '{{ require_env "DB_USER" }}'
+  PG_DB_PASSWORD: '{{ require_env "DB_PASSWORD_SECRET" }}'
+
+wham_steps:
+- name: "load-to-postgres"
+  command: ["./scripts/load.sh"]
+  env_vars: *common_postgres_vars
+----
+
+.Example: Using a default value for an optional environment variable
+[source,yaml]
+----
+wham_steps:
+- name: "configure-app"
+  command: ["./scripts/configure.sh"]
+  env_vars:
+    # If LOG_LEVEL is set in the environment, use it. Otherwise, default to "info".
+    LOG_LEVEL: '{{ getenv "LOG_LEVEL" "info" }}'
+----
+
+=== Parallel and distributed execution
+
+By default, `wham run all` executes steps sequentially. However, nothing prevents you from running multiple independent steps of the same workflow in parallel by launching multiple WHAM! processes. This can be done on a single machine or across different machines in a distributed environment.
+
+The only requirement for parallel execution is that the `metadata_dir` must be on a shared filesystem (e.g., NFS, S3, SMB) accessible to all processes. This ensures that each step can correctly read the state of its predecessors.
+
+.Example: Running two independent branches of a DAG in parallel
+[source,bash]
+----
+# In terminal 1:
+./wham --config settings.yaml run step-A
+
+# In terminal 2, at the same time:
+./wham --config settings.yaml run step-B
+----
+
+[NOTE]
+====
+WHAM! does not provide built-in locking or coordination for concurrent execution of the same step. If you run the same step simultaneously from multiple processes, you are responsible for managing race conditions and ensuring state consistency.
+====
+
+=== The DAG (Directed Acyclic Graph)
+
+You define your workflow as a DAG in the `settings.yaml` file. Each step can declare a list of `previous_steps` it depends on. WHAM! uses this graph to determine the correct execution order and to detect impossible workflows (e.g., circular dependencies).
+
+== Build and test WHAM!
+
+To build and test the WHAM! executable from source, run:
+
+[source,bash]
+----
+# 1 - Run tests
+# the -race flag detects race conditions, and -cover calculates test coverage
+go test -v -race -cover ./...
+# 2 - Build the binary
+go build -o wham
+# ...or, if you have make installed:
+make build
+----
+
+This will create a `wham` binary in the current directory.
+
+== Quick start
+
+. Create a `settings.yaml` file:
++
+[source,yaml]
+----
+wham_settings:
+  data_dir: "./source_data"
+  metadata_dir: "./wham_state"
+
+wham_steps:
+  - name: "hello"
+    # This command writes the key/value pair for the run_id into the state file.
+    # The state file path is passed via an environment variable for better reusability.
+    command: ["bash", "-c"]
+    args: ["echo 'hello=world' > ${STATE_FILE_PATH}"]
+    is_stateful: true
+    env_vars:
+      STATE_FILE_PATH: "{{.Config.WhamSettings.MetadataDir}}/{{.Step.StateFile}}"
+    state_file: "hello.state"
+    run_id_var: "hello"
+    previous_steps: []
+  - name: "world"
+    command: ["bash", "-c"]
+    args: ["echo", "The world has changed!"]
+    is_stateful: false
+    previous_steps: ["hello"]
+----
+
+. Run the workflow:
++
+[source,bash]
+----
+./wham run all
+----
+
+. Run it again. Notice how nothing happens because the run_id (`hello`) hasn't changed.
+
+. Force a re-run:
++
+[source,bash]
+----
+./wham run all --force
+----
+
+=== Using WHAM! as a Gatekeeper in Argo Workflows
+
+One of WHAM!'s most powerful use cases is acting as a smart "gatekeeper" inside a larger orchestrator like Argo Workflows. Instead of building complex logic in Argo, you can use a single WHAM! step to decide if a resource-intensive task should run or its execution can be safely skipped.
+
+The integration pattern is simple: each step in your Argo Workflow invokes a corresponding `wham run <step_name>` command. WHAM! handles the state logic internally and exits with a success code (`0`) unless a critical error occurs, allowing Argo to manage the high-level flow.
+
+This allows you to leverage WHAM!'s state management directly within Argo:
+
+. An Argo step runs `wham run stateful-step`. WHAM! executes the script, which, based on its internal logic, decides whether to keep its old `run_id` or generate a new one in its state file on a shared volume.
+. A subsequent Argo step runs `wham run stateless-step`, which depends on `stateful-step`.
+. WHAM! checks if the `run_id` from `stateful-step` has changed since `stateless-step`'s last successful run.
+* *If the `run_id` is unchanged*, WHAM! skips the script execution for `stateless-step`, updates its state to "skipped", and exits with `code 0`. Argo sees a success and proceeds to the next step
+* *If the `run_id` has changed*, WHAM! executes the script for `stateless-step`:
+** If the script succeeds, WHAM! updates the state to "run", adopts the new `run_id` from its predecessors, and exits with `code 0`
+** If the script fails but has `can_fail: true`, WHAM! preserves the step's previous `run_id`, updates its state to "failed", and still exits with `code 0`, allowing the Argo workflow to continue
+** If the script fails and is critical (`can_fail: false`), WHAM! exits with a non-zero code, which correctly halts the Argo workflow
+
+To make this pattern work, it is crucial that all WHAM! processes share the same `metadata_dir`. This ensures that every step can read the state files generated by its predecessors. In a Kubernetes environment, this is typically achieved by mounting a shared volume into each container, or by using a network file storage service like S3 or NFS.
+
+.Example: Gating a resource-intensive task in Argo
+[source,yaml]
+----
+# Assumes a PersistentVolumeClaim named 'shared-metadata-pvc' already exists.
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  name: data-processing-workflow
+spec:
+  entrypoint: main
+  templates:
+  - name: main
+    steps:
+    - - name: check-new-data
+        template: wham-step-template
+        arguments: {parameters: [{name: step-name, value: check-for-new-data}]}
+    - - name: process-the-data
+        template: wham-step-template
+        arguments: {parameters: [{name: step-name, value: process-data}]}
+  - name: wham-step-template
+    inputs:
+      parameters:
+      - name: step-name
+    container:
+      image: your-wham-image:latest
+      # Each Argo step calls WHAM to run a specific step from the settings file. Use --force if needed.
+      command: ["wham", "run", "{{inputs.parameters.step-name}}", "--config", "/config/settings.yaml"]
+      volumeMounts:
+      - name: shared-metadata-pvc # The name of the existing PVC
+        mountPath: /mnt/storage/metadata # ...at the path specified in settings.yaml's metadata_dir
+----
+
+== Configuration
+
+The entire workflow is defined in one or more YAML files (`settings.yaml` by default).
+
+[NOTE]
+====
+You can take advantage of advanced YAML features like anchors and aliases to avoid repetition in your configuration files. This is particularly useful for shared parameters across multiple steps and for creating overlay files for different environments (e.g., `prod` vs. `debug`).
+
+You can define a common set of parameters using an anchor (e.g., `&common_params`) and then reference them in each step using an alias (`*common_params`). An overlay file can then override just the anchor definition, and all steps referencing it will automatically use the new values.
+
+This way, you can keep your configuration DRY (Don't Repeat Yourself) and maintainable.
+====
+
+=== Global settings
+
+The `wham_settings` section in the settings file(s) defines the global parameters for the workflow.
+
+|====
+| Key | Type | Description
+
+| `data_dir`
+| string
+| The directory where your scripts can read/write data files. WHAM! makes this available via the `VAR_DATA_DIR` environment variable
+
+| `metadata_dir`
+| string
+| The directory where WHAM! stores its own state files. WHAM! makes this available via the `VAR_METADATA_DIR` environment variable
+
+| `metadata_prefix`
+| string
+| A prefix for all WHAM!-generated state file names (e.g., `wham_`)
+
+| `metadata_suffix`
+| string
+| A suffix for all WHAM!-generated state file names (e.g., `.state`)
+
+| `metadata_add_depth`
+| boolean
+| If true, includes the step's calculated DAG depth in the state filename for better sorting (e.g., `wham_001_my-step.state`)
+
+| `metadata_depth_padding`
+| integer
+| The number of digits for zero-padding the depth in filenames
+
+| `shared_args`
+| list
+| A list of command-line argument templates to be passed to *every* step script. Each template can expand into multiple space-separated arguments
+|====
+
+=== Step definitions
+
+The `wham_steps` section in the settings file(s) is a list where each item defines a single step in the workflow.
+
+|====
+| Key | Type | Description
+
+| `name`
+| string
+| A unique identifier for the step
+
+| `command`
+| list
+| The executable and its fixed arguments (e.g., `["python", "-u", "script.py"]`). The path can be relative to the `settings.yaml` file
+
+| `args`
+| list of strings
+| A list of command-line arguments specific to this step. Each item in the list is treated as a single argument, preserving spaces
+
+| `env_vars`
+| map of strings
+| A map of environment variables to set for the script's execution (e.g., `VAR: "value"`)
+
+| `retries`
+| integer
+| The number of times to retry a failed script. Defaults to 0 (no retries)
+
+| `retry_delay`
+| duration
+| The duration to wait between retries (e.g., `5s`, `1m`, `2h`)
+
+| `can_fail`
+| boolean
+| If true, the workflow will continue even if this step fails
+
+| `is_stateful`
+| boolean
+| Determines the step's behavior (see <<Core concepts>>)
+
+| `state_file`
+| string
+| *Required for stateful steps*. The name of the file this step generates in the `metadata_dir`
+
+| `run_id_var`
+| string
+| *Required for stateful steps*. The name of the variable inside the `state_file` that holds the `run_id` (e.g., `run_id=some_value`)
+
+| `previous_steps`
+| list of strings
+| A list of step names that must complete before this step can run
+
+| `work_dir`
+| string
+| If specified, sets the working directory for the script's execution. The path can be absolute, or relative to the configuration file's directory. If omitted, the script runs in the same working directory as the WHAM process
+
+| `image`
+| string
+| Specifies the container image to be used for this step in an orchestrated environment like Argo Workflows. This is for metadata purposes and is not used by WHAM! itself
+|====
+
+== Usage
+
+WHAM! provides a structured CLI for interacting with your workflow, following an `object verb` pattern similar to tools like `docker`. For convenience, shortcuts are provided for the most common actions.
+
+[source,bash]
+----
+wham [global flags] <command> [subcommand] [args]
+----
+
+=== Global Flags
+
+* `--config, -c`: Path to one or more WHAM configuration files (default: `settings.yaml`)
+* `--debug, -d`: Enable verbose debug logging
+* `--output, -o`: Output format (`table`, `json`, `yaml`)
+
+=== Commands
+
+WHAM! provides a set of commands organized by objects (`step`, `state`, `dag`, `config`). For convenience, the commands which work on the `step` object (`run`, `validate`, etc.) are also available as top-level shortcuts.
+
+|====
+| Command | Description
+
+| `step run <step\|all>` or `run <step\|all>`
+| Runs a specific step or all steps. Use `--force` or `-f` to ignore state and re-run unconditionally. When running `all`, you can use `--from <step>` and/or `--to <step>` to execute only a specific slice of the DAG
+
+| `step validate <step\|all>` or `validate <step\|all>`
+| Validates the configuration of a step or all steps, checking for script existence and permissions
+
+| `step get <step\|all>` or `get <step\|all>`
+| Shows the static configuration of a step or all steps in a structured format
+
+| `step describe <step\|all>` or `describe <step\|all>`
+| Shows a step's detailed configuration and its current execution state
+
+| `state get <step\|all>`
+| Shows the final execution state (run, skipped, failed) of a step or all steps
+
+| `state delete <step\|all>`
+| Deletes the state file for a step or all steps, forcing them to re-run on the next execution. Use `--yes` or `-y` to bypass confirmation
+
+| `dag get`
+| Displays the entire workflow's execution graph (DAG), showing depths and dependencies
+
+| `config get`
+| Displays the entire workflow's configuration
+
+| `version`
+| Displays WHAM version information
+|====
+
+== Example
+
+Here is a simple workflow with one stateful and one stateless step.
+
+.settings.yaml
+[source, yaml]
+----
+wham_settings:
+  data_dir: "./source_data"
+  metadata_dir: "./wham_state"
+  metadata_prefix: "wham_"
+  metadata_suffix: ".state"
+
+wham_steps:
+- name: "check-for-new-data"
+  env_vars:
+    STATE_FILE_PATH: "{{.Config.WhamSettings.MetadataDir}}/{{.Step.StateFile}}"
+  command: ["./scripts/check_source.sh"]
+  is_stateful: true
+  state_file: "source.state"
+  run_id_var: "LATEST_FILE_TIMESTAMP"
+  previous_steps: []
+- name: "process-data"
+  command: ["./scripts/process.sh"]
+  is_stateful: false
+  previous_steps:
+  - "check-for-new-data"
+----
+
+.scripts/check_source.sh
+[source, bash]
+----
+#!/bin/bash
+# This script finds the latest file in the data directory (provided by $VAR_DATA_DIR)
+# and writes its modification time to the state file.
+# The `|| LATEST_TIMESTAMP="0"` part handles the case where the directory is empty.
+LATEST_TIMESTAMP=$(find "${VAR_DATA_DIR}" -type f -printf '%T@ %p\n' | sort -n | tail -1 | cut -d' ' -f1) || LATEST_TIMESTAMP="0"
+echo "LATEST_FILE_TIMESTAMP=${LATEST_TIMESTAMP}" > "${STATE_FILE_PATH}"
+----
+
+.scripts/process.sh
+[source,bash]
+----
+#!/bin/bash
+echo "Processing new data..."
+# ... processing logic here ...
+echo "Done."
+----
+
+To run this workflow:
+
+[source,bash]
+----
+# First, set up the necessary directories and a dummy data file for the example.
+mkdir -p source_data metadata
+touch source_data/some_file.txt
+
+# Run the entire workflow
+./wham --config settings.yaml run all
+----
+
+The first time you run this, both steps will execute. If you run it again immediately, `check-for-new-data` will run, but since its `run_id` (the timestamp) hasn't changed, `process-data` will be skipped.
+
+More examples can be found in the link:test/settings[test settings] and link:examples/settings[example settings] directories, which contains various configurations to demonstrate WHAM!'s capabilities.
+
+== License
+
+WHAM! is Open Source software licensed under the MIT License.
+
+See the link:LICENSE[LICENSE] file for the full license text.

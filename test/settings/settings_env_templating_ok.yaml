@@ -1,0 +1,16 @@
+wham_settings:
+  data_dir: "./data"
+  metadata_dir: "./state"
+
+wham_steps:
+  - name: "test_env_vars_ok"
+    command: ["../scripts/bash/print_env_vars.sh"]
+    env_vars:
+      # This var should be set in the test environment
+      REQUIRED_VAR: '{{ require_env "TEST_VAR_PRESENT" }}'
+      # This var should also be set
+      OPTIONAL_VAR_PRESENT: '{{ getenv "TEST_VAR_PRESENT" }}'
+      # This var will NOT be set in the test environment, should be empty
+      OPTIONAL_VAR_MISSING: '{{ getenv "TEST_VAR_MISSING" }}'
+      # This var will NOT be set, should use the default value
+      OPTIONAL_VAR_WITH_DEFAULT: '{{ getenv "TEST_VAR_MISSING_WITH_DEFAULT" "this_is_the_default" }}'

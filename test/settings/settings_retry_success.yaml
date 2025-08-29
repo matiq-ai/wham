@@ -1,0 +1,18 @@
+### TEST: A step that fails but succeeds after retries ###
+
+wham_settings:
+  data_dir: "../states/data"
+  metadata_dir: "../states/metadata"
+  metadata_prefix: "wham_"
+  metadata_suffix: ".state"
+
+wham_steps:
+- name: "retry_step_succeeds"
+  command: ["../../test/scripts/bash/stateless.sh"]
+  env_vars:
+    SIMULATE_FAIL_COUNT: "2" # Fail twice, succeed on the 3rd attempt
+    COUNTER_FILE: "retry_step_succeeds_counter.txt"
+  retries: 3 # Allow up to 3 retries (4 total attempts), which is enough.
+  retry_delay: "100ms" # Use a short delay for testing
+  can_fail: false
+  previous_steps: []

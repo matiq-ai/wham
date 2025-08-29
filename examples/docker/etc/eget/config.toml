@@ -1,0 +1,19 @@
+# eget.toml
+
+# Global section
+[global]
+target = "/usr/local/bin"
+upgrade_only = true
+
+# age
+["FiloSottile/age"]
+# asset_filters = [ "age", "linux-amd64", "tar.gz" ]
+asset_filters = [ "age", "tar.gz" ]
+
+# minio mc
+["https://dl.min.io/client/mc/release/linux-amd64/mc"]
+
+# yq
+["mikefarah/yq"]
+# asset_filters = [ "yq", "linux_amd64", "^tar.gz" ]
+asset_filters = [ "yq", "^tar.gz" ]

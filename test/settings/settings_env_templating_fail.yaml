@@ -1,0 +1,10 @@
+wham_settings:
+  data_dir: "./data"
+  metadata_dir: "./state"
+
+wham_steps:
+  - name: "test_require_env_fails"
+    command: ["../scripts/bash/print_env_vars.sh"]
+    env_vars:
+      # This var will NOT be set in the test environment, causing a failure
+      REQUIRED_VAR_MISSING: '{{ require_env "TEST_VAR_THAT_DOES_NOT_EXIST" }}'

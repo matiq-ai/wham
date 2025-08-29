@@ -1,0 +1,23 @@
+### FAIL: Step depends on a non-existent predecessor ###
+
+# WORKFLOW SETTINGS
+wham_settings:
+  data_dir: "../states/data"
+  metadata_dir: "../states/metadata"
+  metadata_prefix: "wham_"
+  metadata_add_depth: true
+  metadata_depth_padding: 3
+  metadata_suffix: ".state"
+
+# WORKFLOW STEP SETTINGS
+wham_steps:
+  - name: "fail_non_existent_predecessor"
+    command: ["../../test/scripts/bash/stateless.sh"]
+    args: []
+    env_vars: {}
+    can_fail: false
+    is_stateful: false
+    state_file: ""
+    run_id_var: ""
+    previous_steps:
+    - "i_do_not_exist"

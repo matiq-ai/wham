@@ -1,0 +1,13 @@
+### FAIL: Duplicate step name ###
+
+wham_settings:
+  data_dir: "../states/data"
+  metadata_dir: "../states/metadata"
+
+wham_steps:
+  - name: "duplicate_step"
+    command: ["../../test/scripts/bash/stateless.sh"]
+  - name: "another_step"
+    command: ["../../test/scripts/bash/stateless.sh"]
+  - name: "duplicate_step" # This is the duplicate
+    command: ["../../test/scripts/bash/stateless.sh"]

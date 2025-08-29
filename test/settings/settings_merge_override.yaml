@@ -1,0 +1,13 @@
+### TEST: Override configuration for merging ###
+
+wham_settings:
+  metadata_dir: "./metadata_override" # This will override the base value
+  # data_dir is intentionally omitted to show the base value is kept
+
+wham_steps:
+  - name: "step-a" # This will override the step with the same name
+    command: ["echo", "step-a-overridden"]
+    retry_delay: "10s"
+
+  - name: "step-c" # This step will be added
+    command: ["echo", "step-c-new"]
